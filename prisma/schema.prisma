@@ -1,0 +1,232 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Workspace {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name            String
+  description     String?
+  adapter_name    String
+  adapter_version String    @default("1.0")
+  owner_id        String?   @db.Uuid
+  created_at      DateTime  @default(now()) @db.Timestamptz
+
+  owner           User?           @relation(fields: [owner_id], references: [id], onDelete: SetNull)
+  api_keys        ApiKey[]
+  nodes           Node[]
+  edges           Edge[]
+  node_features   NodeFeature[]
+  pair_features   PairFeature[]
+  node_embeddings NodeEmbedding[]
+  models          ModelRecord[]
+  predictions     Prediction[]
+  prediction_jobs PredictionJob[]
+  usage_logs      UsageLog[]
+
+  @@map("workspaces")
+}
+
+model ApiKey {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String    @db.Uuid
+  key_hash     String    @unique
+  name         String
+  created_at   DateTime  @default(now()) @db.Timestamptz
+  last_used_at DateTime? @db.Timestamptz
+  revoked      Boolean   @default(false)
+
+  workspace Workspace @relation(fields: [workspace_id], references: [id])
+
+  @@map("api_keys")
+}
+
+model User {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email         String    @unique
+  password_hash String
+  created_at    DateTime  @default(now()) @db.Timestamptz
+
+  sessions   UserSession[]
+  workspaces Workspace[]
+
+  @@map("users")
+}
+
+model UserSession {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id    String   @db.Uuid
+  token_hash String   @unique
+  expires_at DateTime @db.Timestamptz
+  created_at DateTime @default(now()) @db.Timestamptz
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("user_sessions")
+}
+
+model Node {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String   @db.Uuid
+  type         String
+  attributes   Json     @default("{}")
+  created_at   DateTime @default(now()) @db.Timestamptz
+
+  workspace Workspace @relation(fields: [workspace_id], references: [id])
+
+  outgoing_edges Edge[] @relation("SourceEdge")
+  incoming_edges Edge[] @relation("TargetEdge")
+
+  node_features        NodeFeature[]
+  source_pair_features PairFeature[]   @relation("SourcePairFeature")
+  target_pair_features PairFeature[]   @relation("TargetPairFeature")
+  node_embeddings      NodeEmbedding[]
+
+  source_predictions Prediction[]    @relation("SourcePrediction")
+  target_predictions Prediction[]    @relation("TargetPrediction")
+  source_jobs        PredictionJob[] @relation("SourceJob")
+  target_jobs        PredictionJob[] @relation("TargetJob")
+
+  @@map("nodes")
+}
+
+model Edge {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id    String   @db.Uuid
+  source_id       String   @db.Uuid
+  target_id       String   @db.Uuid
+  type            String
+  weight          Float    @default(1.0)
+  weight_strategy String   @default("explicit")
+  event_time      DateTime @default(now()) @db.Timestamptz
+
+  workspace Workspace @relation(fields: [workspace_id], references: [id])
+  source    Node      @relation("SourceEdge", fields: [source_id], references: [id], onDelete: Cascade)
+  target    Node      @relation("TargetEdge", fields: [target_id], references: [id], onDelete: Cascade)
+
+  @@map("edges")
+}
+
+model NodeFeature {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String   @db.Uuid
+  node_id      String   @db.Uuid
+  version      Int      @default(1)
+  features     Json
+  computed_at  DateTime @default(now()) @db.Timestamptz
+
+  workspace Workspace @relation(fields: [workspace_id], references: [id])
+  node      Node      @relation(fields: [node_id], references: [id], onDelete: Cascade)
+
+  @@map("node_features")
+}
+
+model PairFeature {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id  String   @db.Uuid
+  source_id     String   @db.Uuid
+  target_id     String   @db.Uuid
+  provider_name String
+  features      Json
+  computed_at   DateTime @default(now()) @db.Timestamptz
+
+  workspace Workspace @relation(fields: [workspace_id], references: [id])
+  source    Node      @relation("SourcePairFeature", fields: [source_id], references: [id], onDelete: Cascade)
+  target    Node      @relation("TargetPairFeature", fields: [target_id], references: [id], onDelete: Cascade)
+
+  @@map("pair_features")
+}
+
+model NodeEmbedding {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String   @db.Uuid
+  node_id      String   @db.Uuid
+  provider     String
+  vector       Json
+  dimension    Int
+  version      Int      @default(1)
+  computed_at  DateTime @default(now()) @db.Timestamptz
+
+  workspace Workspace @relation(fields: [workspace_id], references: [id])
+  node      Node      @relation(fields: [node_id], references: [id], onDelete: Cascade)
+
+  @@map("node_embeddings")
+}
+
+model ModelRecord {
+  id              String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id    String @db.Uuid
+  name            String @unique
+  type            String
+  training_config Json   @default("{}")
+
+  workspace   Workspace    @relation(fields: [workspace_id], references: [id])
+  predictions Prediction[]
+
+  @@map("models")
+}
+
+model Prediction {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String   @db.Uuid
+  model_id     String?  @db.Uuid
+  source_id    String   @db.Uuid
+  target_id    String   @db.Uuid
+  score        Float
+  predicted_at DateTime @default(now()) @db.Timestamptz
+
+  workspace Workspace   @relation(fields: [workspace_id], references: [id])
+  model     ModelRecord? @relation(fields: [model_id], references: [id])
+  source    Node        @relation("SourcePrediction", fields: [source_id], references: [id])
+  target    Node        @relation("TargetPrediction", fields: [target_id], references: [id])
+
+  @@map("predictions")
+}
+
+model PredictionJob {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id    String    @db.Uuid
+  source_id       String    @db.Uuid
+  target_id       String    @db.Uuid
+  pipeline_config Json
+  status          String    @default("pending")
+  result          Json?
+  error           String?
+  created_at      DateTime  @default(now()) @db.Timestamptz
+  completed_at    DateTime? @db.Timestamptz
+
+  workspace Workspace @relation(fields: [workspace_id], references: [id])
+  source    Node      @relation("SourceJob", fields: [source_id], references: [id])
+  target    Node      @relation("TargetJob", fields: [target_id], references: [id])
+
+  @@map("prediction_jobs")
+}
+
+model DeadLetterQueue {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  operation String?
+  entity    String?
+  payload   Json?
+  error     String?
+  failed_at DateTime @default(now()) @db.Timestamptz
+
+  @@map("dead_letter_queue")
+}
+
+model UsageLog {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String?  @db.Uuid
+  endpoint     String
+  method       String   @default("POST")
+  status_code  Int?
+  latency_ms   Int?
+  created_at   DateTime @default(now()) @db.Timestamptz
+
+  workspace Workspace? @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+
+  @@map("usage_logs")
+}
